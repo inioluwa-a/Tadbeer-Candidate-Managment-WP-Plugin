@@ -8,6 +8,7 @@ Author URI: http://peacemathew.com.ng
 License: GPL2
 */
 
+define('RAPIDAPI_PHOTO_ENHANCE_KEY', '38e11956e2msh165243e2e13ef3cp106b37jsn51b8d14dd826');
 
 // Exit if accessed directly
 if (!defined('ABSPATH')) {
@@ -55,6 +56,64 @@ add_action('wp_enqueue_scripts', function () {
         );
     }
 });
+
+
+/**
+ * Enhance image quality using RapidAPI Photo Enhance.
+ * Called after profile image and full profile image uploads.
+ * @param int $attachment_id WordPress attachment ID
+ * @return bool Success status
+ */
+
+function enhance_image_with_rapidapi($attachment_id)
+{
+    $api_key = defined('RAPIDAPI_PHOTO_ENHANCE_KEY') ? RAPIDAPI_PHOTO_ENHANCE_KEY : '';
+    if (empty($api_key)) {
+        error_log('[Tadbeer] RapidAPI Photo Enhance key is not set.', 0);
+        return false;
+    }
+    $image_path = get_attached_file($attachment_id);
+    $image_data = file_get_contents($image_path);
+    $image_base64 = base64_encode($image_data);
+
+    $body = json_encode([
+        'image_base64' => $image_base64,
+        'type' => 'clean',
+        'scale_factor' => 2
+    ]);
+
+    $response = wp_remote_post('https://photo-enhance-api.p.rapidapi.com/api/scale', [
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'x-rapidapi-host' => 'photo-enhance-api.p.rapidapi.com',
+            'x-rapidapi-key'  => $api_key,
+        ],
+        'body' => $body,
+        'timeout' => 60,
+    ]);
+
+    if (is_wp_error($response)) {
+        error_log('[Tadbeer] RapidAPI request error: ' . $response->get_error_message(), 0);
+        return false;
+    }
+
+    $data = json_decode(wp_remote_retrieve_body($response), true);
+    if (empty($data['image_base64'])) {
+        error_log('[Tadbeer] RapidAPI response missing image_base64. Response: ' . wp_remote_retrieve_body($response), 0);
+        return false;
+    }
+    if (!empty($data['image_base64'])) {
+        // Overwrite the original image with the enhanced one
+        file_put_contents($image_path, base64_decode($data['image_base64']));
+        // Regenerate thumbnails if needed
+        if (function_exists('wp_update_attachment_metadata')) {
+            $attach_data = wp_generate_attachment_metadata($attachment_id, $image_path);
+            wp_update_attachment_metadata($attachment_id, $attach_data);
+        }
+        return true;
+    }
+    return false;
+}
 
 // Enqueue Scripts
 function enqueue_passport_scan_scripts()
@@ -130,10 +189,16 @@ function translate_personality_to_arabic($trait)
 function translate_civil_status_to_arabic($status)
 {
     $translations = array(
-        'Single' => 'أعزب',
-        'Married' => 'متزوج',
-        'Divorced' => 'مطلق',
-        'Widowed' => 'أرمل'
+        'Single'      => 'أعزب',
+        'Married'     => 'متزوج',
+        'Divorced'    => 'مطلق',
+        'Widowed'     => 'أرمل',
+        'Separated'   => 'منفصل',
+        'Engaged'     => 'مخطوب',
+        'In a Relationship' => 'في علاقة',
+        'Partnered'   => 'شريك',
+        'Other'       => 'أخرى'
+        // Add more as needed
     );
     return isset($translations[$status]) ? $translations[$status] : $status;
 }
@@ -141,16 +206,28 @@ function translate_civil_status_to_arabic($status)
 function translate_job_to_arabic($job)
 {
     $translations = array(
-        'Housemaid' => 'عاملة منزلية',
-        'Sailor' => 'بحار',
-        'Security Guard' => 'حارس أمن',
-        'Housekeeper' => 'مدبرة منزل',
-        'Cook' => 'طباخ',
-        'Nanny/Babysitter' => 'مربية أطفال',
-        'Farmer' => 'مزارع',
-        'Gardener' => 'بستاني',
-        'Personal driver' => 'سائق خاص',
-        'Maid' => 'خادمة'
+        'Housemaid'              => 'عاملة منزلية',
+        'Housekeeper'            => 'مدبرة منزل',
+        'Cook'                   => 'طباخ',
+        'Nanny/Babysitter'       => 'مربية أطفال',
+        'Driver'                 => 'سائق',
+        'Personal driver'        => 'سائق خاص',
+        'Security Guard'         => 'حارس أمن',
+        'Farmer'                 => 'مزارع',
+        'Gardener'               => 'بستاني',
+        'Cleaner'                => 'منظف',
+        'Caregiver'              => 'مقدم رعاية',
+        'Tutor'                  => 'مدرس خصوصي',
+        'Babysitter'             => 'جليسة أطفال',
+        'Elder Care'             => 'رعاية كبار السن',
+        'Pet Care'               => 'رعاية الحيوانات الأليفة',
+        'Sailor'                 => 'بحار',
+        'Household Shepard'      => 'راعي منزل',
+        'Household horse groomer' => 'معتني بخيول المنزل',
+        'Household falcon trainer' => 'مدرب صقور المنزل',
+        'Tamer'                  => 'مروض',
+        'Physical labour worker' => 'عامل بدني',
+        // Add more job titles here as needed
     );
     return isset($translations[$job]) ? $translations[$job] : $job;
 }
@@ -169,7 +246,29 @@ function translate_nationality_to_arabic($nationality)
         'Ghana' => 'غانا',
         'Myanmar' => 'ميانمار',
         'Bangladesh' => 'بنغلاديش',
-        'Nigeria' => 'نيجيريا'
+        'Nigeria' => 'نيجيريا',
+        'Iraq'         => 'العراق',
+        'Lebanon'      => 'لبنان',
+        'India'        => 'الهند',
+        'Pakistan'     => 'باكستان',
+        'Egypt'        => 'مصر',
+        'Morocco'      => 'المغرب',
+        'South Africa' => 'جنوب أفريقيا',
+        'Turkey'       => 'تركيا',
+        'China'        => 'الصين',
+        'Japan'        => 'اليابان',
+        'Thailand'     => 'تايلاند',
+        'Russia'       => 'روسيا',
+        'United States' => 'الولايات المتحدة',
+        'United Kingdom' => 'المملكة المتحدة',
+        'Canada'       => 'كندا',
+        'Australia'    => 'أستراليا',
+        'Germany'      => 'ألمانيا',
+        'Italy'        => 'إيطاليا',
+        'France'       => 'فرنسا',
+        'Spain'        => 'إسبانيا',
+        'Portugal'     => 'البرتغال',
+        // Add more nationalities as needed
     );
     return isset($translations[$nationality]) ? $translations[$nationality] : $nationality;
 }
@@ -189,28 +288,59 @@ function translate_skill_to_arabic($skill)
 {
     $translations = array(
         // Main Skills
-        'Baby Care' => 'رعاية الأطفال الرضع',
-        'Child Care' => 'رعاية الأطفال',
-        'Teen Care' => 'رعاية المراهقين',
-        'Elderly Care' => 'رعاية المسنين',
-        'Pet Care' => 'رعاية الحيوانات الأليفة',
-        'Tutoring' => 'تدريس خصوصي',
-        'Housekeeping' => 'تدبير منزلي',
-        'Cooking' => 'طبخ',
-        'Driving' => 'قيادة',
+        'Baby Care'        => 'رعاية الأطفال الرضع',
+        'Child Care'       => 'رعاية الأطفال',
+        'Teen Care'        => 'رعاية المراهقين',
+        'Elderly Care'     => 'رعاية المسنين',
+        'Pet Care'         => 'رعاية الحيوانات الأليفة',
+        'Tutoring'         => 'تدريس خصوصي',
+        'Housekeeping'     => 'تدبير منزلي',
+        'Cooking'          => 'طبخ',
+        'Driving'          => 'قيادة',
+        'Cleaning'         => 'تنظيف',
+        'Laundry'          => 'غسيل الملابس',
+        'Ironing'          => 'كي الملابس',
+        'Shopping'         => 'تسوق',
+        'Disabled Care'    => 'رعاية ذوي الاحتياجات الخاصة',
+
+        // Cooking Skills
+        'Middle East'      => 'طبخ شرق أوسطي',
+        'Vegetarian'       => 'طبخ نباتي',
+        'Western'          => 'طبخ غربي',
+        'Asian'            => 'طبخ آسيوي',
+        'African'          => 'طبخ أفريقي',
+        'Indian'           => 'طبخ هندي',
+        'Filipino'         => 'طبخ فلبيني',
+        'Chinese'          => 'طبخ صيني',
+        'Italian'          => 'طبخ إيطالي',
+        'Mexican'          => 'طبخ مكسيكي',
+        'Thai'             => 'طبخ تايلاندي',
+        'Japanese'         => 'طبخ ياباني',
+        'Mediterranean'    => 'طبخ متوسطي',
+        'Arabic'           => 'طبخ عربي',
+        'Lebanese'         => 'طبخ لبناني',
+        'Turkish'          => 'طبخ تركي',
 
         // Other Skills
-        'Banking' => 'خدمات مصرفية',
-        'Caregiver' => 'مقدم رعاية',
-        'Car wash' => 'غسيل سيارات',
-        'Computer' => 'حاسوب',
-        'Driving Licence' => 'رخصة قيادة',
-        'First Aid' => 'إسعافات أولية',
-        'Gardening' => 'بستنة',
-        'Handyman' => 'صيانة منزلية',
-        'Housework' => 'أعمال منزلية',
-        'Sewing' => 'خياطة',
-        'Swimming' => 'سباحة'
+        'Caregiver'        => 'مقدم رعاية',
+        'Banking'          => 'خدمات مصرفية',
+        'Computer'         => 'حاسوب',
+        'Driving License'  => 'رخصة قيادة',
+        'First Aid'        => 'إسعافات أولية',
+        'Gardening'        => 'بستنة',
+        'Handyman'         => 'صيانة منزلية',
+        'Housework'        => 'أعمال منزلية',
+        'Sewing'           => 'خياطة',
+        'Swimming'         => 'سباحة',
+        'Car Wash'         => 'غسيل سيارات',
+        'Massage'          => 'تدليك',
+        'Hair Care'        => 'العناية بالشعر',
+        'Nursing'          => 'تمريض',
+        'Teaching'         => 'تدريس',
+        'Office Work'      => 'عمل مكتبي',
+        'Sales'            => 'مبيعات',
+        'Customer Service' => 'خدمة العملاء'
+        // Add more skills as needed
     );
     return isset($translations[$skill]) ? $translations[$skill] : $skill;
 }
@@ -218,28 +348,34 @@ function translate_skill_to_arabic($skill)
 function translate_language_to_arabic($language)
 {
     $translations = array(
-        'English' => 'الإنجليزية',
-        'Arabic' => 'العربية',
-        'French' => 'الفرنسية',
-        'Chinese' => 'الصينية',
-        'Spanish' => 'الإسبانية',
-        'Hindi' => 'الهندية',
-        'Portuguese' => 'البرتغالية',
-        'Bengali' => 'البنغالية',
-        'Russian' => 'الروسية',
-        'Amharic' => 'الأمهرية',
-        'Tagalog' => 'التاغالوغية',
-        'Indonesian' => 'الإندونيسية',
-        'Swahili' => 'السواحيلية',
-        'Hausa' => 'الهوسا',
-        'Yoruba' => 'اليوروبا',
-        'Igbo' => 'الإيغبو',
-        'Oromo' => 'الأورومو',
-        'Urdu' => 'الأوردو',
-        'Japanese' => 'اليابانية',
-        'Punjabi' => 'البنجابية',
-        'Vietnamese' => 'الفيتنامية',
-        'Marathi' => 'المراثية'
+        'English'      => 'الإنجليزية',
+        'Arabic'       => 'العربية',
+        'French'       => 'الفرنسية',
+        'Chinese'      => 'الصينية',
+        'Spanish'      => 'الإسبانية',
+        'Hindi'        => 'الهندية',
+        'Portuguese'   => 'البرتغالية',
+        'Bengali'      => 'البنغالية',
+        'Russian'      => 'الروسية',
+        'Amharic'      => 'الأمهرية',
+        'Tagalog'      => 'التاغالوغية',
+        'Indonesian'   => 'الإندونيسية',
+        'Swahili'      => 'السواحيلية',
+        'Hausa'        => 'الهوسا',
+        'Yoruba'       => 'اليوروبا',
+        'Igbo'         => 'الإيغبو',
+        'Oromo'        => 'الأورومو',
+        'Urdu'         => 'الأوردو',
+        'Japanese'     => 'اليابانية',
+        'Punjabi'      => 'البنجابية',
+        'Vietnamese'   => 'الفيتنامية',
+        'Marathi'      => 'المراثية',
+        'Tamil'        => 'التاميلية',
+        'Telugu'       => 'التيلجو',
+        'Korean'       => 'الكورية',
+        'German'       => 'الألمانية',
+        'Italian'      => 'الإيطالية'
+        // Add more languages as needed
     );
     return isset($translations[$language]) ? $translations[$language] : $language;
 }
@@ -256,14 +392,56 @@ function translate_country_to_arabic($country)
         'Bahrain' => 'البحرين',
 
 
-        'Iraq' => 'العراق',
-        'Lebanon' => 'لبنان',
-        'Beirut' => 'بيروت',
+        // Middle East
+        'Iraq'         => 'العراق',
+        'Lebanon'      => 'لبنان',
+        'Beirut'       => 'بيروت',
+        'Jordan'       => 'الأردن',
+        'Syria'        => 'سوريا',
+        'Palestine'    => 'فلسطين',
+        'Egypt'        => 'مصر',
 
         // Asian Countries
-        'Singapore' => 'سنغافورة',
-        'Hong Kong' => 'هونغ كونغ',
-        'Malaysia' => 'ماليزيا'
+        'Singapore'    => 'سنغافورة',
+        'Hong Kong'    => 'هونغ كونغ',
+        'Malaysia'     => 'ماليزيا',
+        'Philippines'  => 'الفلبين',
+        'Indonesia'    => 'إندونيسيا',
+        'Sri Lanka'    => 'سريلانكا',
+        'Vietnam'      => 'فيتنام',
+        'Nepal'        => 'نيبال',
+        'Myanmar'      => 'ميانمار',
+        'Bangladesh'   => 'بنغلاديش',
+        'India'        => 'الهند',
+        'China'        => 'الصين',
+        'Japan'        => 'اليابان',
+        'Thailand'     => 'تايلاند',
+        'Pakistan'     => 'باكستان',
+
+        // African Countries
+        'Ethiopia'     => 'إثيوبيا',
+        'Uganda'       => 'أوغندا',
+        'Kenya'        => 'كينيا',
+        'Ghana'        => 'غانا',
+        'Nigeria'      => 'نيجيريا',
+        'South Africa' => 'جنوب أفريقيا',
+        'Morocco'      => 'المغرب',
+        'Sudan'        => 'السودان',
+        'Somalia'      => 'الصومال',
+
+        // Other
+        'Turkey'       => 'تركيا',
+        'Russia'       => 'روسيا',
+        'United States' => 'الولايات المتحدة',
+        'United Kingdom' => 'المملكة المتحدة',
+        'Canada'       => 'كندا',
+        'Australia'    => 'أستراليا',
+        'Germany'      => 'ألمانيا',
+        'Italy'        => 'إيطاليا',
+        'France'       => 'فرنسا',
+        'Spain'        => 'إسبانيا',
+        'Portugal'     => 'البرتغال',
+        // Add more countries as needed
     );
     return isset($translations[$country]) ? $translations[$country] : $country;
 }
@@ -682,15 +860,21 @@ function add_team_member_form($atts = [])
         $passport_expiry_date    = get_post_meta($edit_id, 'team_member_passport_expiry_date', true);
         $passport_place_of_issue = get_post_meta($edit_id, 'team_member_passport_place_of_issue', true);
         $passport_scan_text      = get_post_meta($edit_id, 'team_member_passport_text', true);
-        $country_experience      = get_post_meta($edit_id, 'country_experience', true) ?: [];
+        $country_experience = get_post_meta($edit_id, 'country_experience', true);
+        if (!is_array($country_experience)) {
+            $country_experience = !empty($country_experience) ? maybe_unserialize($country_experience) : [];
+            if (!is_array($country_experience)) {
+                $country_experience = [];
+            }
+        }
 
 
         // Images
         $image_id               = get_post_meta($edit_id, 'team_member_image', true);
         $image_url              = $image_id ? wp_get_attachment_url($image_id) : '';
         if (!$full_profile_image_id_new) {
-                    $full_profile_image_id_new = get_post_meta($post_id, 'team_member_full_profile_image', true);
-                }
+            $full_profile_image_id_new = get_post_meta($post_id, 'team_member_full_profile_image', true);
+        }
         $full_profile_image_id  = get_post_meta($edit_id, 'team_member_full_profile_image', true);
         $full_profile_image_url = $full_profile_image_id ? wp_get_attachment_url($full_profile_image_id) : '';
         $company_logo_id        = get_post_meta($edit_id, 'team_member_logo_url', true);
@@ -704,18 +888,18 @@ function add_team_member_form($atts = [])
 
     // --- FORM SUBMISSION HANDLING ---
     if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['submit_team_member'])) {
-         $error_message = '';
+        $error_message = '';
         // Verify nonce
         if (!isset($_POST['team_member_nonce']) || !wp_verify_nonce($_POST['team_member_nonce'], 'add_team_member')) {
             wp_die('Security check failed');
         }
 
-       // Clean output buffer only before redirect
+        // Clean output buffer only before redirect
         while (ob_get_level()) {
             ob_end_clean();
         }
 
-       
+
         // Sanitize and assign submitted data
         $name                = sanitize_text_field($_POST['team_member_name']);
         $nationality         = sanitize_text_field($_POST['team_member_nationality']);
@@ -725,7 +909,11 @@ function add_team_member_form($atts = [])
 
         $qualification       = sanitize_text_field($_POST['team_member_qualification']);
         $experience          = sanitize_text_field($_POST['team_member_experience']);
-        $languages           = sanitize_text_field($_POST['team_member_languages']);
+        if (!empty($_POST['team_member_languages']) && is_array($_POST['team_member_languages'])) {
+            $languages = implode(', ', array_map('sanitize_text_field', $_POST['team_member_languages']));
+        } else {
+            $languages = sanitize_text_field($_POST['team_member_languages']);
+        }
         $education           = sanitize_text_field($_POST['team_member_education']);
         $religion            = sanitize_text_field($_POST['team_member_religion']);
         $place_of_birth      = sanitize_text_field($_POST['team_member_place_of_birth']);
@@ -768,14 +956,16 @@ function add_team_member_form($atts = [])
 
 
         // Country Experience
+        // Country Experience
         $country_experience = array();
-        if (!empty($_POST['team_member_countries']) && !empty($_POST['country_years'])) {
-            foreach ($_POST['team_member_countries'] as $country_val) { // Use a different variable name
+        if (!empty($_POST['team_member_countries']) && is_array($_POST['team_member_countries'])) {
+            foreach ($_POST['team_member_countries'] as $country_val) {
                 $sanitized_country = sanitize_text_field($country_val);
+                $years = '';
                 if (isset($_POST['country_years'][$sanitized_country])) {
                     $years = intval($_POST['country_years'][$sanitized_country]);
-                    $country_experience[$sanitized_country] = $years;
                 }
+                $country_experience[$sanitized_country] = $years;
             }
         }
 
@@ -794,7 +984,7 @@ function add_team_member_form($atts = [])
             $has_check_fields = true;
         }
         // Only run duplicate check if we have fields to check
-         $existing = false;
+        $existing = false;
         if ($has_check_fields) {
             $args = array(
                 'post_type'   => 'team_member',
@@ -813,7 +1003,7 @@ function add_team_member_form($atts = [])
             if ($existing) {
                 $error_message = 'A CV with this name or passport number already exists.';
             }
-        } 
+        }
 
         // Only proceed if no duplicates found
         if (!$existing && empty($error_message)) {
@@ -1030,8 +1220,15 @@ function add_team_member_form($atts = [])
                 // Process each image upload
                 $passport_scan_id_new     = $handle_image_upload('team_member_passport_scan', 'team_member_passport_scan', $post_id);
                 $image_id_new             = $handle_image_upload('team_member_image', 'team_member_image', $post_id);
-                $full_profile_image_id_new = $handle_image_upload('team_member_full_profile_image', 'team_member_full_profile_image', $post_id);
                 $company_logo_id_new      = $handle_image_upload('team_member_logo_url', 'team_member_logo_url', $post_id); // Ensure this meta key matches your existing usage
+
+                // Process the Full Profile Image upload
+                $full_profile_image_id_new = $handle_image_upload('team_member_full_profile_image', 'team_member_full_profile_image', $post_id);
+
+                // Save the attachment ID if uploaded or retain existing if not
+                if (!empty($full_profile_image_id_new)) {
+                    update_post_meta($post_id, 'team_member_full_profile_image', $full_profile_image_id_new);
+                }
 
 
                 // Update the variables used for display in case of successful upload
@@ -1045,17 +1242,15 @@ function add_team_member_form($atts = [])
                 if (!empty($upload_errors)) {
                     $error_message = implode('<br>', $upload_errors);
                 } else {
-                                   
+
                     // Build clean redirect URL
                     $redirect_url = remove_query_arg(array('edit_id', 'edit'), $_SERVER['REQUEST_URI']);
                     $redirect_url = add_query_arg('success', 1, $redirect_url);
-                    
+
 
                     // Ensure clean redirect
                     wp_safe_redirect($redirect_url);
                     exit;
-                
-
                 }
             }
         }
@@ -1069,7 +1264,7 @@ function add_team_member_form($atts = [])
 
 
     ob_start();
-    ?><style>
+?><style>
         /*  Highlight missing fields */
         .highlight-missing {
             border: 2px solid #e53935 !important;
@@ -2433,28 +2628,34 @@ function add_team_member_form($atts = [])
             <h3>Media Uploads</h3>
             <div class="form-row">
                 <div>
-                    <label>Profile Image:</label>
+                    <label>Profile Image(JPEG/PNG):</label>
                     <?php if (!empty($image_url)): ?>
                         <div>
                             <img src="<?php echo esc_url($image_url); ?>" alt="Current Profile Image" style="max-width:100px;max-height:100px;">
                             <br>
                             <small>Current Image</small>
+                            <?php if (get_post_meta($edit_id, 'team_member_image_enhanced', true) === '1'): ?>
+                                <span class="image-enhanced-badge">Enhanced</span>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                     <input type="file" name="team_member_image">
                 </div>
                 <div>
-                    <label>Full Profile Image:</label>
+                    <label>Full Profile Image(JPEG/PNG):</label>
                     <?php if (!empty($full_profile_image_url)): ?>
                         <div>
                             <img src="<?php echo esc_url($full_profile_image_url); ?>" alt="Current Full Profile Image" style="max-width:100px;max-height:100px;">
                             <br>
                             <small>Current Full Profile Image</small>
+                            <?php if (get_post_meta($edit_id, 'team_member_full_profile_image_enhanced', true) === '1'): ?>
+                                <span class="image-enhanced-badge">Enhanced</span>
+                            <?php endif; ?>
                         </div>
                     <?php endif; ?>
                     <input type="file" name="team_member_full_profile_image">
                 </div>
-                <div>
+                <!-- <div>
                     <label>Company Logo:</label>
                     <?php if (!empty($company_logo_url)): ?>
                         <div>
@@ -2464,13 +2665,34 @@ function add_team_member_form($atts = [])
                         </div>
                     <?php endif; ?>
                     <input type="file" name="team_member_logo_url">
-                </div>
+                </div> -->
             </div>
         </div>
 
-
-
-
+        <?php
+        // Add badge CSS once in the form output
+        if (!function_exists('add_image_enhanced_badge_css')) {
+            function add_image_enhanced_badge_css()
+            {
+        ?>
+                <style>
+                    .image-enhanced-badge {
+                        display: inline-block;
+                        background: #27ae60;
+                        color: #fff;
+                        font-size: 12px;
+                        font-weight: bold;
+                        padding: 2px 10px;
+                        border-radius: 12px;
+                        margin: 6px 0 0 0;
+                        box-shadow: 0 1px 4px rgba(39, 174, 96, 0.12);
+                    }
+                </style>
+        <?php
+            }
+            add_image_enhanced_badge_css();
+        }
+        ?>
 
         <button type="submit" name="submit_team_member">
             <?php echo $is_edit ? 'Update Team Member' : 'Add Team Member'; ?>
@@ -3939,45 +4161,6 @@ function process_mrz_ajax()
     }
 }
 
-// Image Enhance
-function enhance_image_with_rapidapi($attachment_id)
-{
-    $api_key = RAPIDAPI_PHOTO_ENHANCE_KEY;
-    $image_path = get_attached_file($attachment_id);
-    $image_data = file_get_contents($image_path);
-    $image_base64 = base64_encode($image_data);
-
-    $body = json_encode([
-        'image_base64' => $image_base64,
-        'type' => 'clean',
-        'scale_factor' => 2
-    ]);
-
-    $response = wp_remote_post('https://photo-enhance-api.p.rapidapi.com/api/scale', [
-        'headers' => [
-            'Content-Type' => 'application/json',
-            'x-rapidapi-host' => 'photo-enhance-api.p.rapidapi.com',
-            'x-rapidapi-key'  => $api_key,
-        ],
-        'body' => $body,
-        'timeout' => 60,
-    ]);
-
-    if (is_wp_error($response)) return false;
-
-    $data = json_decode(wp_remote_retrieve_body($response), true);
-    if (!empty($data['image_base64'])) {
-        // Overwrite the original image with the enhanced one
-        file_put_contents($image_path, base64_decode($data['image_base64']));
-        // Regenerate thumbnails if needed
-        if (function_exists('wp_update_attachment_metadata')) {
-            $attach_data = wp_generate_attachment_metadata($attachment_id, $image_path);
-            wp_update_attachment_metadata($attachment_id, $attach_data);
-        }
-        return true;
-    }
-    return false;
-}
 
 
 
